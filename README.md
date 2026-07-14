@@ -1,6 +1,6 @@
 # 🔬 AI Research Agent
 
-A full-stack AI-powered research assistant built with **Python Flask** and **IBM Watsonx.ai** 
+A full-stack AI-powered research assistant built with **Python Flask** and **IBM Watsonx.ai** It automates academic research workflows, including literature search, AI-powered summarization, citation management, and report generation.
 
 ## 🛠️ Built With
 
