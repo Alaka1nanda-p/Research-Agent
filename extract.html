@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Data Extraction{% endblock %}
+{% block page_title %}Data Extraction{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="ra-card">
+      <div class="ra-card-header">
+        <i class="bi bi-scissors me-2 text-accent"></i>Extract Structured Data from Abstract / Paper
+      </div>
+      <div class="ra-card-body">
+        <p style="font-size:13px;color:var(--ra-muted);margin-bottom:14px">
+          Paste an abstract or paper excerpt and the Granite model will extract
+          structured fields: objective, method, dataset, results, and limitations.
+          Results are cached — the same text is never sent to the LLM twice.
+        </p>
+        <label class="form-label" style="font-size:12.5px;color:var(--ra-muted)">
+          Paste abstract or excerpt (max ~2000 chars)
+        </label>
+        <textarea id="extractText" class="form-control" rows="9"
+          placeholder="Paste paper abstract or text here…"
+          style="font-family:inherit;font-size:13.5px;resize:vertical"></textarea>
+        <div class="d-flex align-items-center gap-3 mt-3">
+          <button class="btn-primary-ra" onclick="runExtraction()" id="extractBtn">
+            <i class="bi bi-lightning-fill me-1"></i>Extract Fields
+          </button>
+          <button class="btn-ghost" onclick="clearExtract()">
+            <i class="bi bi-x-circle me-1"></i>Clear
+          </button>
+          <span id="charCount" style="font-size:12px;color:var(--ra-muted);margin-left:auto"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="ra-card h-100">
+      <div class="ra-card-header">
+        <i class="bi bi-table me-2 text-accent"></i>Extracted Fields
+      </div>
+      <div class="ra-card-body" id="extractOutput">
+        <div style="text-align:center;padding:48px 20px;color:var(--ra-muted)">
+          <i class="bi bi-file-earmark-medical" style="font-size:48px;opacity:.3;display:block;margin-bottom:14px"></i>
+          Extraction results will appear here.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Example abstracts for quick demo -->
+<div class="ra-card mt-4">
+  <div class="ra-card-header"><i class="bi bi-stars me-2 text-accent"></i>Quick Demo Abstracts</div>
+  <div class="ra-card-body">
+    <div class="row g-2">
+      <div class="col-md-6">
+        <div style="border:1px solid var(--ra-border);border-radius:8px;padding:12px 14px;cursor:pointer;font-size:12.5px;color:#9aa3b8"
+          onclick="loadDemo(0)">
+          <strong style="color:#c8d4ee;display:block;margin-bottom:4px">Transformer Architecture (NLP)</strong>
+          We present the Transformer, a model architecture eschewing recurrence and instead relying entirely on an attention mechanism to draw global dependencies between input and output. The Transformer allows for significantly more parallelization and can reach a new state of the art in translation quality after being trained for as little as twelve hours on eight P100 GPUs.
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div style="border:1px solid var(--ra-border);border-radius:8px;padding:12px 14px;cursor:pointer;font-size:12.5px;color:#9aa3b8"
+          onclick="loadDemo(1)">
+          <strong style="color:#c8d4ee;display:block;margin-bottom:4px">Federated Learning (Privacy)</strong>
+          We present a practical approach to federated learning on mobile devices, communicating updates to a shared model rather than raw data. Our approach handles non-IID data across clients, scales to millions of devices, and satisfies differential privacy guarantees. We demonstrate results on a language modeling task using LSTM networks on a dataset of 10M devices.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const DEMOS = [
+  `We present the Transformer, a model architecture eschewing recurrence and instead relying entirely on an attention mechanism to draw global dependencies between input and output. The Transformer allows for significantly more parallelization and can reach a new state of the art in translation quality after being trained for as little as twelve hours on eight P100 GPUs. Experiments are performed on two machine translation tasks: English-to-German and English-to-French, surpassing all previously published ensemble results, achieving 28.4 BLEU and 41.0 BLEU respectively.`,
+  `We present a practical approach to federated learning on mobile devices, communicating updates to a shared model rather than raw data. Our approach handles non-IID data across clients, scales to millions of devices, and satisfies differential privacy guarantees. We demonstrate results on a language modeling task using LSTM networks on a dataset of 10M devices. A primary practical consideration is the communication efficiency: our method requires 2.5×–3× less communication than the baseline.`
+];
+
+function loadDemo(i) {
+  document.getElementById('extractText').value = DEMOS[i];
+  updateCharCount();
+}
+
+function clearExtract() {
+  document.getElementById('extractText').value = '';
+  document.getElementById('extractOutput').innerHTML = `
+    <div style="text-align:center;padding:48px 20px;color:var(--ra-muted)">
+      <i class="bi bi-file-earmark-medical" style="font-size:48px;opacity:.3;display:block;margin-bottom:14px"></i>
+      Extraction results will appear here.
+    </div>`;
+  updateCharCount();
+}
+
+function updateCharCount() {
+  const txt = document.getElementById('extractText').value;
+  document.getElementById('charCount').textContent = txt.length + ' chars';
+}
+
+document.getElementById('extractText').addEventListener('input', updateCharCount);
+
+async function runExtraction() {
+  const text = document.getElementById('extractText').value.trim();
+  if (!text) { showToast('Please paste some text first.', 'warn'); return; }
+  if (text.length < 50) { showToast('Text is too short for extraction.', 'warn'); return; }
+
+  const btn    = document.getElementById('extractBtn');
+  const output = document.getElementById('extractOutput');
+  btn.disabled = true;
+  output.innerHTML = `<div style="text-align:center;padding:32px"><div class="spinner-dots"><span></span><span></span><span></span></div><div style="margin-top:10px;color:var(--ra-muted);font-size:13px">Extracting…</div></div>`;
+
+  try {
+    const r    = await fetch('/api/extract', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text})
+    });
+    const data = await r.json();
+
+    if (data.error) {
+      output.innerHTML = `<div style="color:#e05252;padding:16px"><i class="bi bi-exclamation-circle me-2"></i>${escHtml(data.error)}</div>`;
+    } else {
+      const fields = data.extracted;
+      const rows = [
+        ['Objective',   fields.objective],
+        ['Method',      fields.method],
+        ['Dataset',     fields.dataset],
+        ['Results',     fields.results],
+        ['Limitations', fields.limitations],
+      ];
+
+      output.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:13.5px">
+          ${rows.map(([label, val]) => `
+            <tr style="border-bottom:1px solid var(--ra-border)">
+              <td style="padding:10px 14px 10px 0;color:var(--ra-muted);font-weight:600;white-space:nowrap;vertical-align:top;width:110px">${label}</td>
+              <td style="padding:10px 0;color:#c8d8f0;vertical-align:top">${escHtml(val || '—')}</td>
+            </tr>
+          `).join('')}
+        </table>
+        ${fields.raw_response ? `<div style="margin-top:14px;font-size:12px;color:var(--ra-muted)">Raw: ${escHtml(fields.raw_response.slice(0,200))}</div>` : ''}
+      `;
+      showToast('Extraction complete!', 'success');
+      refreshUsage();
+    }
+  } catch(e) {
+    output.innerHTML = `<div style="color:#e05252;padding:16px">Error: ${escHtml(e.message)}</div>`;
+  }
+  btn.disabled = false;
+}
+</script>
+{% endblock %}

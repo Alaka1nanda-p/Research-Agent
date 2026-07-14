@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}Reports & Hypotheses{% endblock %}
+{% block page_title %}Reports &amp; Hypotheses{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+
+  <!-- ── Report Generator ────────────────────────────────────────── -->
+  <div class="col-lg-7">
+    <div class="ra-card mb-3">
+      <div class="ra-card-header">
+        <i class="bi bi-file-earmark-richtext-fill me-2 text-accent"></i>Generate Literature Review
+      </div>
+      <div class="ra-card-body">
+        <div class="row g-2 mb-3">
+          <div class="col-md-7">
+            <label class="form-label" style="font-size:12.5px;color:var(--ra-muted)">Research topic / query</label>
+            <input type="text" id="reportQuery" class="form-control"
+              placeholder="e.g., LLM alignment techniques" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label" style="font-size:12.5px;color:var(--ra-muted)">Citation style</label>
+            <select class="form-select" id="reportStyle">
+              <option value="APA">APA</option>
+              <option value="IEEE">IEEE</option>
+              <option value="BibTeX">BibTeX</option>
+            </select>
+          </div>
+          <div class="col-md-2 d-flex align-items-end">
+            <button class="btn-primary-ra w-100" onclick="generateReport()" id="genReportBtn">
+              <i class="bi bi-play-fill me-1"></i>Generate
+            </button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--ra-muted)">
+          <i class="bi bi-info-circle me-1"></i>
+          Uses already-saved summaries — no new LLM calls per paper.
+          Make sure you have saved references first.
+        </div>
+      </div>
+    </div>
+
+    <!-- Report output -->
+    <div class="ra-card" id="reportOutputCard" style="display:none">
+      <div class="ra-card-header d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-file-text me-2 text-accent"></i>Generated Report</span>
+        <button class="btn-ghost" style="font-size:12px" onclick="copyReport()">
+          <i class="bi bi-clipboard me-1"></i>Copy
+        </button>
+      </div>
+      <div class="ra-card-body">
+        <div id="reportSpinner" style="display:none;text-align:center;padding:24px">
+          <div class="spinner-dots"><span></span><span></span><span></span></div>
+          <div style="margin-top:10px;color:var(--ra-muted);font-size:13px">Generating report…</div>
+        </div>
+        <pre class="report-pre" id="reportOutput"></pre>
+      </div>
+    </div>
+
+    <!-- Past reports -->
+    {% if reports %}
+    <div class="ra-card mt-3">
+      <div class="ra-card-header"><i class="bi bi-clock-history me-2"></i>Previous Reports</div>
+      <div class="ra-card-body" style="padding:0">
+        {% for rpt in reports %}
+        <div class="d-flex align-items-center gap-2 px-4 py-3"
+          style="border-bottom:1px solid var(--ra-border);cursor:pointer"
+          onclick="loadReport('{{ rpt.id }}')"></div>
+          <i class="bi bi-file-earmark-text text-accent"></i>
+          <div style="flex:1">
+            <div style="font-size:13.5px;font-weight:500">{{ rpt.title }}</div>
+            <div style="font-size:11.5px;color:var(--ra-muted)">{{ rpt.citation_style }} · {{ rpt.created_at[:16] }}</div>
+          </div>
+          <i class="bi bi-chevron-right" style="color:var(--ra-muted)"></i>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── Hypotheses & Draft ────────────────────────────────────────── -->
+  <div class="col-lg-5">
+
+    <!-- Hypotheses -->
+    <div class="ra-card mb-3">
+      <div class="ra-card-header">
+        <i class="bi bi-lightbulb-fill me-2" style="color:#fbbf24"></i>Research Hypothesis Suggestion
+      </div>
+      <div class="ra-card-body">
+        <p style="font-size:13px;color:var(--ra-muted);margin-bottom:14px">
+          Analyzes patterns across saved paper summaries and suggests novel research directions.
+          Single LLM call.
+        </p>
+        <button class="btn-primary-ra w-100" onclick="generateHypotheses()" id="hypoBtn">
+          <i class="bi bi-lightbulb me-1"></i>Suggest Hypotheses
+        </button>
+        <div id="hypoSpinner" style="display:none;text-align:center;padding:16px">
+          <div class="spinner-dots"><span></span><span></span><span></span></div>
+        </div>
+        <pre class="report-pre mt-3" id="hypoOutput" style="display:none"></pre>
+      </div>
+    </div>
+
+    <!-- Draft section writer -->
+    <div class="ra-card">
+      <div class="ra-card-header">
+        <i class="bi bi-pencil-square me-2 text-accent"></i>Draft Section Writer
+      </div>
+      <div class="ra-card-body">
+        <div class="mb-2">
+          <label class="form-label" style="font-size:12.5px;color:var(--ra-muted)">Section to write</label>
+          <select class="form-select" id="draftSection">
+            <option>Introduction</option>
+            <option>Related Work</option>
+            <option>Methodology</option>
+            <option>Discussion</option>
+            <option>Conclusion</option>
+            <option>Abstract</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" style="font-size:12.5px;color:var(--ra-muted)">Research topic (optional)</label>
+          <input type="text" id="draftQuery" class="form-control"
+            placeholder="e.g., federated learning privacy" />
+        </div>
+        <button class="btn-primary-ra w-100" onclick="writeDraft()" id="draftBtn">
+          <i class="bi bi-pencil me-1"></i>Write Draft
+        </button>
+        <div id="draftSpinner" style="display:none;text-align:center;padding:16px">
+          <div class="spinner-dots"><span></span><span></span><span></span></div>
+        </div>
+        <pre class="report-pre mt-3" id="draftOutput" style="display:none"></pre>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ── Generate report ──────────────────────────────────────────────────────
+async function generateReport() {
+  const query = document.getElementById('reportQuery').value.trim() || 'Literature Review';
+  const style = document.getElementById('reportStyle').value;
+  const btn   = document.getElementById('genReportBtn');
+  const card  = document.getElementById('reportOutputCard');
+  const pre   = document.getElementById('reportOutput');
+  const spin  = document.getElementById('reportSpinner');
+
+  btn.disabled = true;
+  card.style.display = '';
+  spin.style.display = '';
+  pre.textContent    = '';
+
+  try {
+    const r    = await fetch('/api/reports/generate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({query, citation_style: style})
+    });
+    const data = await r.json();
+    spin.style.display = 'none';
+    if (data.error) {
+      pre.textContent = '⚠ ' + data.error;
+    } else {
+      pre.textContent = data.content;
+      showToast('Report generated!', 'success');
+      refreshUsage();
+    }
+  } catch(e) {
+    spin.style.display = 'none';
+    pre.textContent = 'Error: ' + e.message;
+  }
+  btn.disabled = false;
+}
+
+async function loadReport(id) {
+  const r    = await fetch('/api/reports/' + id);
+  const data = await r.json();
+  const card = document.getElementById('reportOutputCard');
+  const pre  = document.getElementById('reportOutput');
+  card.style.display = '';
+  pre.textContent    = data.content || data.error || '';
+}
+
+function copyReport() {
+  const txt = document.getElementById('reportOutput').textContent;
+  navigator.clipboard.writeText(txt).then(() => showToast('Copied!', 'success'));
+}
+
+// ── Hypotheses ────────────────────────────────────────────────────────────
+async function generateHypotheses() {
+  const btn  = document.getElementById('hypoBtn');
+  const pre  = document.getElementById('hypoOutput');
+  const spin = document.getElementById('hypoSpinner');
+
+  btn.disabled        = true;
+  spin.style.display  = '';
+  pre.style.display   = 'none';
+
+  try {
+    const r    = await fetch('/api/hypotheses', { method:'POST' });
+    const data = await r.json();
+    spin.style.display = 'none';
+    pre.style.display  = '';
+    pre.textContent    = data.error ? '⚠ ' + data.error : data.hypotheses;
+    if (!data.error) showToast('Hypotheses generated!', 'success');
+    refreshUsage();
+  } catch(e) {
+    spin.style.display = 'none';
+    pre.style.display  = '';
+    pre.textContent    = 'Error: ' + e.message;
+  }
+  btn.disabled = false;
+}
+
+// ── Draft ─────────────────────────────────────────────────────────────────
+async function writeDraft() {
+  const section = document.getElementById('draftSection').value;
+  const query   = document.getElementById('draftQuery').value.trim();
+  const btn     = document.getElementById('draftBtn');
+  const pre     = document.getElementById('draftOutput');
+  const spin    = document.getElementById('draftSpinner');
+
+  btn.disabled       = true;
+  spin.style.display = '';
+  pre.style.display  = 'none';
+
+  try {
+    const r    = await fetch('/api/draft', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({section, query})
+    });
+    const data = await r.json();
+    spin.style.display = 'none';
+    pre.style.display  = '';
+    pre.textContent    = data.error ? '⚠ ' + data.error : data.draft;
+    if (!data.error) showToast('Draft written!', 'success');
+    refreshUsage();
+  } catch(e) {
+    spin.style.display = 'none';
+    pre.style.display  = '';
+    pre.textContent    = 'Error: ' + e.message;
+  }
+  btn.disabled = false;
+}
+</script>
+{% endblock %}

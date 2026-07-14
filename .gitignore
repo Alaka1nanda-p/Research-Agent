@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+research_agent.db
+.venv/
+venv/

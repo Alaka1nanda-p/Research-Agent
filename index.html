@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+{% block title %}Chat & Search{% endblock %}
+{% block page_title %}Chat &amp; Search{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+
+  <!-- ── Left: Chat panel ─────────────────────────────────────────── -->
+  <div class="col-lg-6">
+    <div class="ra-card h-100" style="display:flex;flex-direction:column">
+      <div class="ra-card-header">
+        <i class="bi bi-chat-dots-fill me-2 text-accent"></i>Research Assistant Chat
+      </div>
+      <div class="ra-card-body" style="flex:1;display:flex;flex-direction:column;padding-bottom:0">
+        <div class="chat-messages" id="chatMessages">
+          <!-- Welcome message -->
+          <div class="msg agent">
+            <div class="msg-avatar agent"><i class="bi bi-journal-bookmark-fill"></i></div>
+            <div class="msg-bubble">
+              <strong>Hello! I'm your AI Research Assistant.</strong><br>
+              Ask me a research question and I'll search academic literature, summarize papers, 
+              and help you build a literature review. Try something like:<br>
+              <em style="color:#8aacda">"What are the latest methods for large language model alignment?"</em>
+              <br><br>
+              You can also ask me to:
+              <ul class="mb-0 mt-1" style="padding-left:16px;font-size:13px">
+                <li>Draft a paper section (e.g. "Write an introduction about…")</li>
+                <li>Generate hypotheses from your saved references</li>
+                <li>Explain a concept</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-input-area">
+          <div class="d-flex gap-2">
+            <input type="text" id="chatInput" class="form-control"
+              placeholder="Ask a research question…" autocomplete="off"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}" />
+            <button class="btn-primary-ra" onclick="sendChat()" id="sendBtn">
+              <i class="bi bi-send-fill"></i>
+            </button>
+          </div>
+          <!-- Quick-action chips -->
+          <div class="d-flex flex-wrap gap-2 mt-2" style="font-size:12px">
+            <span class="badge bg-secondary" style="cursor:pointer;font-weight:400"
+              onclick="setChat('Suggest research hypotheses from my saved papers')">
+              <i class="bi bi-lightbulb me-1"></i>Hypotheses
+            </span>
+            <span class="badge bg-secondary" style="cursor:pointer;font-weight:400"
+              onclick="setChat('Write an Introduction section for a paper on my research topic')">
+              <i class="bi bi-pencil-square me-1"></i>Draft Intro
+            </span>
+            <span class="badge bg-secondary" style="cursor:pointer;font-weight:400"
+              onclick="setChat('Write a Related Work section based on my saved references')">
+              <i class="bi bi-card-list me-1"></i>Related Work
+            </span>
+            <span class="badge bg-secondary" style="cursor:pointer;font-weight:400"
+              onclick="setChat('Generate a literature review report')">
+              <i class="bi bi-file-earmark-richtext me-1"></i>Full Report
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right: Search results ────────────────────────────────────── -->
+  <div class="col-lg-6">
+    <div class="ra-card">
+      <div class="ra-card-header d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-search me-2 text-accent"></i>Search Results</span>
+        <span id="searchMeta" class="text-muted-ra" style="font-size:12px;font-weight:400"></span>
+      </div>
+      <div class="ra-card-body" id="searchResults" style="max-height:calc(100vh - 200px);overflow-y:auto">
+        <div style="text-align:center;padding:48px 20px;color:var(--ra-muted)">
+          <i class="bi bi-journal-text" style="font-size:48px;opacity:.3;display:block;margin-bottom:14px"></i>
+          Ask a research question to fetch papers from arXiv &amp; Semantic Scholar.
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentQuery = '';
+
+// Holds the papers from the most recent search, indexed by position.
+// Save buttons reference papers by index instead of embedding JSON
+// directly into HTML attributes (which broke on titles/abstracts
+// containing quote characters).
+let lastPapers = [];
+
+// ── Chat send ────────────────────────────────────────────────────────────
+async function sendChat() {
+  const input = document.getElementById('chatInput');
+  const query = input.value.trim();
+  if (!query) return;
+
+  input.value = '';
+  appendMsg(query, 'user');
+  const loadId = appendLoading();
+
+  // Detect intent: draft, hypothesis, report, or search
+  const lq = query.toLowerCase();
+  try {
+    if (/\bhypothes/i.test(lq)) {
+      await handleHypotheses(loadId);
+    } else if (/\b(draft|write|introduction|related work|methodology|conclusion|abstract|discussion)\b/i.test(lq)) {
+      await handleDraft(query, loadId);
+    } else if (/\b(generate|create|make|produce).*(report|review|literature)/i.test(lq)) {
+      await handleReport(query, loadId);
+    } else {
+      await handleSearch(query, loadId);
+    }
+  } catch(e) {
+    removeLoading(loadId);
+    appendMsg('Sorry, something went wrong: ' + e.message, 'agent');
+  }
+}
+
+function setChat(txt) {
+  document.getElementById('chatInput').value = txt;
+  document.getElementById('chatInput').focus();
+}
+
+// ── Search handler ───────────────────────────────────────────────────────
+async function handleSearch(query, loadId) {
+  currentQuery = query;
+  const r   = await fetch('/api/query', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({query})
+  });
+  const data = await r.json();
+  removeLoading(loadId);
+
+  if (data.error) { appendMsg('Error: ' + data.error, 'agent'); return; }
+
+  const parsed  = data.parsed_query;
+  const papers  = data.papers || [];
+  const kwStr   = (parsed.keywords || []).slice(0,6).join(', ');
+
+  let agentMsg = `Found <strong>${papers.length} paper${papers.length!==1?'s':''}</strong> for your query.<br>`;
+  if (parsed.topic_area) agentMsg += `<span style="color:#8b95a8">Topic: ${escHtml(parsed.topic_area)}</span><br>`;
+  if (kwStr) agentMsg += `<span style="color:#8b95a8">Keywords: ${escHtml(kwStr)}</span>`;
+  if (data.used_fallback) {
+    agentMsg += '<br><span style="color:#e07b39"><i class="bi bi-exclamation-triangle-fill me-1"></i>Could not reach search APIs — showing demo results.</span>';
+  }
+
+  appendMsg(agentMsg, 'agent');
+  renderSearchResults(papers);
+  refreshUsage();
+}
+
+// ── Hypotheses handler ───────────────────────────────────────────────────
+async function handleHypotheses(loadId) {
+  const r    = await fetch('/api/hypotheses', { method:'POST' });
+  const data = await r.json();
+  removeLoading(loadId);
+  if (data.error) { appendMsg('⚠ ' + data.error, 'agent'); return; }
+  appendMsg('<strong><i class="bi bi-lightbulb-fill me-1 text-accent"></i>Research Hypotheses</strong><br><pre style="white-space:pre-wrap;font-size:12.5px;margin-top:8px;background:transparent;border:none;padding:0;color:#b8c8e4">' + escHtml(data.hypotheses) + '</pre>', 'agent');
+  refreshUsage();
+}
+
+// ── Draft handler ────────────────────────────────────────────────────────
+async function handleDraft(query, loadId) {
+  // Extract section name
+  const secMatch = query.match(/\b(introduction|related work|methodology|method|conclusion|abstract|discussion|background)\b/i);
+  const section  = secMatch ? secMatch[1] : 'Introduction';
+  const r    = await fetch('/api/draft', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({section, query: currentQuery || query})
+  });
+  const data = await r.json();
+  removeLoading(loadId);
+  if (data.error) { appendMsg('⚠ ' + data.error, 'agent'); return; }
+  appendMsg(`<strong><i class="bi bi-pencil-fill me-1 text-accent"></i>Draft: ${escHtml(section)}</strong><br><pre style="white-space:pre-wrap;font-size:12.5px;margin-top:8px;background:transparent;border:none;padding:0;color:#b8c8e4">${escHtml(data.draft)}</pre>`, 'agent');
+  refreshUsage();
+}
+
+// ── Report handler ───────────────────────────────────────────────────────
+async function handleReport(query, loadId) {
+  const r    = await fetch('/api/reports/generate', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({query: currentQuery||query, citation_style:'APA'})
+  });
+  const data = await r.json();
+  removeLoading(loadId);
+  if (data.error) { appendMsg('⚠ ' + data.error, 'agent'); return; }
+  appendMsg(`<strong><i class="bi bi-file-earmark-richtext-fill me-1 text-accent"></i>Literature Review Generated</strong><br>
+    <a href="/reports" class="btn-ghost mt-2 d-inline-block" style="font-size:12px">
+      <i class="bi bi-arrow-right me-1"></i>View Full Report
+    </a>`, 'agent');
+  refreshUsage();
+}
+
+// ── Render paper cards ───────────────────────────────────────────────────
+function renderSearchResults(papers) {
+  lastPapers = papers; // store for lookup by index — avoids embedding JSON in HTML
+
+  const container = document.getElementById('searchResults');
+  const meta      = document.getElementById('searchMeta');
+  meta.textContent = papers.length + ' result(s)';
+
+  if (!papers.length) {
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--ra-muted)">No papers found for this query.</div>';
+    return;
+  }
+
+  container.innerHTML = papers.map((p, idx) => {
+    const src = p.source === 'arxiv' ? 'badge-arxiv' : p.source === 'semantic_scholar' ? 'badge-ss' : 'badge-fallback';
+    const srcLabel = p.source === 'arxiv' ? 'arXiv' : p.source === 'semantic_scholar' ? 'S2' : 'Demo';
+    const authStr  = (p.authors||[]).slice(0,3).join(', ') + ((p.authors||[]).length>3?' et al.':'');
+    const year     = p.year || 'n.d.';
+    return `
+    <div class="paper-card" id="card-${escId(p.paper_id)}">
+      <div class="d-flex align-items-start gap-2 mb-1">
+        <span class="badge badge-source ${src}">${srcLabel}</span>
+        <div class="paper-title flex-1">
+          <a href="${escHtml(p.url)}" target="_blank" style="color:inherit;text-decoration:none">${escHtml(p.title)}</a>
+        </div>
+      </div>
+      <div class="paper-meta">${escHtml(authStr)} · ${year}${p.venue?' · '+escHtml(p.venue):''}</div>
+      ${p.summary ? `<div class="paper-summary"><i class="bi bi-stars me-1 text-accent" style="font-size:11px"></i>${escHtml(p.summary)}</div>` : ''}
+      <div class="paper-abstract mt-2">${escHtml((p.abstract||'').slice(0,220))}${(p.abstract||'').length>220?'…':''}</div>
+      <div class="d-flex align-items-center gap-2 mt-3">
+        <button class="btn-primary-ra btn-sm" onclick="savePaperByIndex(${idx})" id="save-${escId(p.paper_id)}" style="font-size:12px;padding:5px 12px">
+          <i class="bi bi-bookmark-plus me-1"></i>Save
+        </button>
+        ${p.url && p.url!=='#' ? `<a href="${escHtml(p.url)}" target="_blank" class="btn-ghost btn-sm" style="font-size:12px;padding:5px 12px"><i class="bi bi-box-arrow-up-right me-1"></i>Open</a>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function escId(s) { return String(s).replace(/[^a-zA-Z0-9_\-]/g, '_'); }
+
+// ── Save paper ───────────────────────────────────────────────────────────
+// Looks the paper up from the lastPapers array by index — no JSON is ever
+// embedded into an HTML attribute, so titles/abstracts with quotes,
+// apostrophes, or other special characters can no longer break the page.
+async function savePaperByIndex(idx) {
+  const paper = lastPapers[idx];
+  if (!paper) { showToast('Could not find paper data', 'error'); return; }
+
+  const btn = document.getElementById('save-' + escId(paper.paper_id));
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i>'; }
+
+  try {
+    const r    = await fetch('/api/papers/save', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(paper)
+    });
+    const data = await r.json();
+    if (data.ok) {
+      showToast('Paper saved to references!', 'success');
+      if (btn) { btn.innerHTML = '<i class="bi bi-bookmark-check-fill me-1"></i>Saved'; btn.style.background='#065f46'; }
+    } else {
+      showToast('Save failed: ' + (data.error||'unknown'), 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-bookmark-plus me-1"></i>Save'; }
+    }
+  } catch (e) {
+    showToast('Save failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-bookmark-plus me-1"></i>Save'; }
+  }
+}
+
+// ── Chat helpers ─────────────────────────────────────────────────────────
+function appendMsg(html, role) {
+  const container = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  const icon = role === 'user'
+    ? '<i class="bi bi-person-fill"></i>'
+    : '<i class="bi bi-journal-bookmark-fill"></i>';
+  div.innerHTML = `
+    <div class="msg-avatar ${role}">${icon}</div>
+    <div class="msg-bubble">${html}</div>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+function appendLoading() {
+  const container = document.getElementById('chatMessages');
+  const id = 'load-' + Date.now();
+  const div = document.createElement('div');
+  div.className = 'msg agent';
+  div.id = id;
+  div.innerHTML = `
+    <div class="msg-avatar agent"><i class="bi bi-journal-bookmark-fill"></i></div>
+    <div class="msg-bubble"><div class="spinner-dots"><span></span><span></span><span></span></div></div>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return id;
+}
+
+function removeLoading(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+</script>
+{% endblock %}
